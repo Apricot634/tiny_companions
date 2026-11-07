@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       zip_url:
-        description: "URL directa a un ZIP (opcional; si se deja vacío se usa el .zip del repositorio)"
+        description: "URL directa a un ZIP (opcional; si se deja vacio se usa el .zip del repositorio)"
         required: false
         default: ""
 
@@ -41,13 +41,34 @@ jobs:
           [ -f "$P/project.godot" ] || { echo "ERROR: el ZIP no contiene project.godot"; exit 1; }
           echo "PROJ=$P" >> "$GITHUB_ENV"
           echo "Proyecto en: $P"
-          ls -la "$P"
-          ls "$P/scenes" "$P/export_presets.cfg"
+          ls "$P" "$P/scenes"
 
-      - name: Preparar Android
+      - name: Preparar Godot
         run: |
           mkdir -p ~/.local/share/godot/export_templates ~/.config/godot
           mv /root/.local/share/godot/export_templates/${GODOT_VERSION}.stable ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable || true
+
+      - name: Prueba automatica (no bloquea la compilacion)
+        continue-on-error: true
+        run: |
+          cd "$PROJ"
+          chmod -R a+rwX .
+          mkdir -p .godot/editor
+          godot --headless --import > "$GITHUB_WORKSPACE/import.log" 2>&1 || true
+          godot --headless --path . --quit-after 900 -- --autotest > "$GITHUB_WORKSPACE/test.log" 2>&1 || true
+          cat "$GITHUB_WORKSPACE/test.log" | grep -v "is not exposed, skipping" | tail -80
+          grep -q "AUTOTEST OK" "$GITHUB_WORKSPACE/test.log"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-log
+          path: |
+            test.log
+            import.log
+
+      - name: Preparar Android
+        run: |
           keytool -keyalg RSA -genkeypair -alias androiddebugkey -keypass android -keystore $HOME/debug.keystore -storepass android -dname "CN=Android Debug,O=Android,C=US" -validity 9999 -deststoretype pkcs12
           SDK=""
           for d in "$ANDROID_SDK_ROOT" "$ANDROID_HOME" /usr/lib/android-sdk /usr/local/lib/android/sdk /opt/android-sdk /root/android-sdk /root/android; do
@@ -67,7 +88,6 @@ jobs:
             echo 'export/android/debug_keystore_user = "androiddebugkey"'
             echo 'export/android/debug_keystore_pass = "android"'
           } > ~/.config/godot/editor_settings-4.3.tres
-          cat ~/.config/godot/editor_settings-4.3.tres
 
       - name: Exportar APK
         env:
@@ -76,9 +96,7 @@ jobs:
           GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD: android
         run: |
           cd "$PROJ"
-          chmod -R a+rwX .
-          mkdir -p .godot/editor build/android
-          godot --headless --import || true
+          mkdir -p build/android
           godot --headless --verbose --export-debug "Android" build/android/TinyCompanions.apk
           mkdir -p "$GITHUB_WORKSPACE/out"
           cp build/android/TinyCompanions.apk "$GITHUB_WORKSPACE/out/"
