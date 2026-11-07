@@ -1,4 +1,4 @@
-name: Build Tiny Companions
+name: Build Wildmere
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       zip_url:
-        description: "URL directa a un ZIP (opcional; si se deja vacio se usa el .zip del repositorio)"
+        description: "URL directa a un ZIP (opcional)"
         required: false
         default: ""
 
@@ -15,10 +15,20 @@ env:
 
 jobs:
   android:
-    name: APK Android
+    name: Android - ${{ matrix.label }}
     runs-on: ubuntu-latest
     container:
       image: barichello/godot-ci:4.3
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dir: game
+            label: Wildmere
+            artifact: Wildmere-Android-APK
+          - dir: archive/tiny_companions_v0.2.1
+            label: Prototipo 0.2.1
+            artifact: Prototipo-0.2.1-Android-APK
     steps:
       - uses: actions/checkout@v4
 
@@ -32,16 +42,16 @@ jobs:
             wget -q -O project.zip "$ZIP_URL"
             ZIP=project.zip
           else
-            ZIP="$(ls -1 *.zip 2>/dev/null | head -n1 || true)"
+            ZIP="$(ls -1 wildmere*.zip 2>/dev/null | sort -V | tail -n1 || true)"
           fi
-          [ -n "$ZIP" ] || { echo "ERROR: no hay ningun .zip en la raiz del repositorio"; exit 1; }
+          [ -n "$ZIP" ] || { echo "ERROR: no hay ningun wildmere*.zip en la raiz"; exit 1; }
           echo "Usando ZIP: $ZIP"
           unzip -q -o "$ZIP" -d proj
-          P="$(dirname "$(find proj -name project.godot | head -n1)")"
-          [ -f "$P/project.godot" ] || { echo "ERROR: el ZIP no contiene project.godot"; exit 1; }
-          echo "PROJ=$P" >> "$GITHUB_ENV"
-          echo "Proyecto en: $P"
-          ls "$P" "$P/scenes"
+          ROOT="$(dirname "$(dirname "$(find proj -maxdepth 4 -path '*/game/project.godot' | head -n1)")")"
+          PROJ="$ROOT/${{ matrix.dir }}"
+          [ -f "$PROJ/project.godot" ] || { echo "ERROR: no existe $PROJ/project.godot"; exit 1; }
+          echo "PROJ=$PROJ" >> "$GITHUB_ENV"
+          ls "$PROJ"
 
       - name: Preparar Godot
         run: |
@@ -55,14 +65,20 @@ jobs:
           chmod -R a+rwX .
           mkdir -p .godot/editor
           godot --headless --import > "$GITHUB_WORKSPACE/import.log" 2>&1 || true
-          godot --headless --path . --quit-after 900 -- --autotest > "$GITHUB_WORKSPACE/test.log" 2>&1 || true
-          cat "$GITHUB_WORKSPACE/test.log" | grep -v "is not exposed, skipping" | tail -80
+          godot --headless --path . --quit-after 1200 -- --autotest > "$GITHUB_WORKSPACE/test.log" 2>&1 || true
+          {
+            echo "## Prueba automatica - ${{ matrix.label }}"
+            echo '```'
+            grep -E "^  (ok|FAIL)|AUTOTEST|SCRIPT ERROR|Parse Error|ERROR:" "$GITHUB_WORKSPACE/test.log" | head -60 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          grep -v "is not exposed, skipping" "$GITHUB_WORKSPACE/test.log" | tail -60
           grep -q "AUTOTEST OK" "$GITHUB_WORKSPACE/test.log"
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: test-log
+          name: test-log-${{ matrix.artifact }}
           path: |
             test.log
             import.log
@@ -97,17 +113,17 @@ jobs:
         run: |
           cd "$PROJ"
           mkdir -p build/android
-          godot --headless --verbose --export-debug "Android" build/android/TinyCompanions.apk
+          godot --headless --verbose --export-debug "Android" build/android/app.apk
           mkdir -p "$GITHUB_WORKSPACE/out"
-          cp build/android/TinyCompanions.apk "$GITHUB_WORKSPACE/out/"
+          cp build/android/app.apk "$GITHUB_WORKSPACE/out/${{ matrix.artifact }}.apk"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: TinyCompanions-Android-APK
-          path: out/TinyCompanions.apk
+          name: ${{ matrix.artifact }}
+          path: out/${{ matrix.artifact }}.apk
 
   windows:
-    name: Windows
+    name: Windows - Wildmere
     runs-on: ubuntu-latest
     container:
       image: barichello/godot-ci:4.3
@@ -124,13 +140,12 @@ jobs:
             wget -q -O project.zip "$ZIP_URL"
             ZIP=project.zip
           else
-            ZIP="$(ls -1 *.zip 2>/dev/null | head -n1 || true)"
+            ZIP="$(ls -1 wildmere*.zip 2>/dev/null | sort -V | tail -n1 || true)"
           fi
-          [ -n "$ZIP" ] || { echo "ERROR: no hay ningun .zip en la raiz del repositorio"; exit 1; }
+          [ -n "$ZIP" ] || { echo "ERROR: no hay ningun wildmere*.zip en la raiz"; exit 1; }
           unzip -q -o "$ZIP" -d proj
-          P="$(dirname "$(find proj -name project.godot | head -n1)")"
-          [ -f "$P/project.godot" ] || { echo "ERROR: el ZIP no contiene project.godot"; exit 1; }
-          echo "PROJ=$P" >> "$GITHUB_ENV"
+          ROOT="$(dirname "$(dirname "$(find proj -maxdepth 4 -path '*/game/project.godot' | head -n1)")")"
+          echo "PROJ=$ROOT/game" >> "$GITHUB_ENV"
 
       - name: Preparar plantillas
         run: |
@@ -143,11 +158,11 @@ jobs:
           chmod -R a+rwX .
           mkdir -p .godot/editor build/windows
           godot --headless --import || true
-          godot --headless --verbose --export-release "Windows Desktop" build/windows/TinyCompanions.exe
+          godot --headless --verbose --export-release "Windows Desktop" build/windows/Wildmere.exe
           mkdir -p "$GITHUB_WORKSPACE/out"
           cp -r build/windows/. "$GITHUB_WORKSPACE/out/"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: TinyCompanions-Windows
+          name: Wildmere-Windows
           path: out
